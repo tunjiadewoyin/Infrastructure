@@ -25,13 +25,13 @@ cd gitops-demo
 
 
 ### 3. Deploy the Infrastructure
-cd infrastructure/terraform
+cd /tunjiadewoyin/infrastructure/IAC/main.tf
 terraform init
 terraform apply
 
 
 ### 4. Configure `kubectl`
-aws eks update-kubeconfig --region us-west-2 --name gitops-demo
+aws eks update-kubeconfig --region us-west-2 --tunjiadewoyin/infrastructure
 
 
 ### 5. Deploy ArgoCD
@@ -40,11 +40,7 @@ cd ../../k8s-setup
 
 
 ### 6. Deploy Application
-kubectl apply -f gitops/argocd/applications/application.yaml
-
-
-Alternatively, use the automated deployment script:
-./deploy.sh
+kubectl apply -f tunjiadewoyin/argocd/applications/nginx-app.yaml
 
 ## Testing Rollback Mechanism
 
@@ -64,7 +60,7 @@ To test the rollback mechanism:
 After deployment:
 
 ### Get the Application URL:
-kubectl get svc -n sample-app sample-microservice -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+kubectl get svc -n nginx-app -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
 
 
 Access the application in your browser or via `curl`:
@@ -113,5 +109,5 @@ curl http://<APPLICATION_URL>
 ## Cleanup
 
 To remove all resources:
-cd infrastructure/terraform
+cd tunjiadewoyin/infrastructure/IAC
 terraform destroy
