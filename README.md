@@ -1,98 +1,117 @@
+# Infrastructure Repository
 This repository contains a complete implementation of a GitOps-driven CI/CD pipeline to deploy microservices to AWS EKS.
-Overview:
-This project demonstrates a modern DevOps approach using GitOps principles for deploying containerized applications to Kubernetes. The pipeline automatically deploys and manages applications with fully automated rollbacks for failed deployments.
 
-Key Features:
-Infrastructure as Code: AWS resources provisioned with Terraform
-GitOps Workflow: Changes to Git repository trigger automated deployments
-Containerization: Application packaged in Docker container
-CI/CD Automation: GitHub Actions for continuous integration
-Kubernetes Deployment: Helm charts with health checks and autoscaling
-Automatic Rollback: Failed deployments automatically roll back to the last stable version
+## Overview
+This project demonstrates a modern DevOps approach using GitOps principles for deploying containerized applications to Kubernetes. The pipeline automatically deploys and manages applications with flexibility and scalability.
 
-Deployment Instructions:
-Setup AWS Credentials
+## Key Features
+
+- **Infrastructure as Code**: AWS resources provisioned with Terraform.
+- **GitOps Workflow**: Changes to the Git repository trigger automated deployments.
+- **Containerization**: Applications are packaged in Docker containers.
+- **CI/CD Automation**: GitHub Actions for continuous integration.
+- **Kubernetes Deployment**: Helm charts with health checks and autoscaling.
+- **Automatic Rollback**: Failed deployments automatically roll back to the last stable version.
+
+## Deployment Instructions
+
+### 1. Setup AWS Credentials
 aws configure
-Clone the Repository:
+
+
+### 2. Clone the Repository
 git clone https://github.com/yourusername/gitops-demo.git
 cd gitops-demo
-Deploy the Infrastructure
-bashcd infrastructure/terraform
+
+
+### 3. Deploy the Infrastructure
+cd infrastructure/terraform
 terraform init
 terraform apply
-Configure kubectl
-bashaws eks update-kubeconfig --region us-west-2 --name gitops-demo
-Deploy ArgoCD
-bashcd ../../k8s-setup
+
+
+### 4. Configure `kubectl`
+aws eks update-kubeconfig --region us-west-2 --name gitops-demo
+
+
+### 5. Deploy ArgoCD
+cd ../../k8s-setup
 ./install-argocd.sh
-Deploy Application
-bashkubectl apply -f gitops/argocd/applications/application.yaml
-Alternatively, Use Automated Deployment Script
-bash./deploy.sh
-Testing Rollback Mechanism
+
+
+### 6. Deploy Application
+kubectl apply -f gitops/argocd/applications/application.yaml
+
+
+Alternatively, use the automated deployment script:
+./deploy.sh
+
+## Testing Rollback Mechanism
+
 To test the rollback mechanism:
 
-Deploy a working version of the application
-Update the application with a broken version
-Observe ArgoCD detecting the failed health checks
-Verify the automatic rollback to the previous working version
+1. Deploy a working version of the application.
+2. Update the application with a broken version.
+3. Observe ArgoCD detecting the failed health checks.
+4. Verify the automatic rollback to the previous working version.
 
-bash# Run the rollback test script
+# Run the rollback test script
 ./test-rollback.sh
-Accessing the Application
+
+
+## Accessing the Application
+
 After deployment:
 
-Get the application URL:
-
-bashkubectl get svc -n sample-app sample-microservice -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
-
-Access the application in your browser or via curl:
-
-bashcurl http://<APPLICATION_URL>
-Accessing ArgoCD UI
-Get the ArgoCD password:
-bashkubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
-Get the ArgoCD server URL:
-bashkubectl get svc argocd-server -n argocd -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
-Access the ArgoCD UI in your browser:
-https://<ARGOCD_SERVER_URL>
-Username: admin
-Password: <ARGOCD_PASSWORD>
-CI/CD Process
-
-Code Changes:
-
-Developers make changes to the application code
-Changes are committed to the Git repository
+### Get the Application URL:
+kubectl get svc -n sample-app sample-microservice -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
 
 
-CI Pipeline:
-
-GitHub Actions builds the Docker image
-Runs tests on the application
-Pushes the image to Amazon ECR
-Updates the deployment manifest with the new image tag
+Access the application in your browser or via `curl`:
+curl http://<APPLICATION_URL>
 
 
-CD Pipeline:
+### Accessing the ArgoCD UI
 
-ArgoCD detects changes in the Git repository
-Synchronizes the cluster state with the desired state
-Deploys the application with the new image
-Monitors health checks and deployment status
+1. Get the ArgoCD password:
+        kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+    
 
+2. Get the ArgoCD server URL:
+        kubectl get svc argocd-server -n argocd -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+    
 
-Rollback Mechanism:
+3. Access the ArgoCD UI in your browser:
+        https://<ARGOCD_SERVER_URL>
+    
 
-If the deployment fails health checks
-ArgoCD automatically reverts to the last working version
+    - **Username**: admin  
+    - **Password**: `<ARGOCD_PASSWORD>`
 
+## CI/CD Process
 
+### Code Changes:
+1. Developers make changes to the application code.
+2. Changes are committed to the Git repository.
 
-Cleanup
+### CI Pipeline:
+1. GitHub Actions builds the Docker image.
+2. Runs tests on the application.
+3. Pushes the image to Amazon ECR.
+4. Updates the deployment manifest with the new image tag.
+
+### CD Pipeline:
+1. ArgoCD detects changes in the Git repository.
+2. Synchronizes the cluster state with the desired state.
+3. Deploys the application with the new image.
+4. Monitors health checks and deployment status.
+
+### Rollback Mechanism:
+1. If the deployment fails health checks.
+2. ArgoCD automatically reverts to the last working version.
+
+## Cleanup
+
 To remove all resources:
-bashcd infrastructure/terraform
+cd infrastructure/terraform
 terraform destroy
-Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
-
