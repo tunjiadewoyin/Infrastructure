@@ -1,0 +1,245 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml """
+            apiVersion: v1
+            kind: Pod
+            spec:
+              containers:
+              - name: docker
+                image: docker:latest
+                command:
+                - cat
+                tty: true
+                volumeMounts:
+                - mountPath: /var/run/docker.sock
+                  name: docker-sock
+              - name: kubectl
+                image: bitnami/kubectl:latest
+                command:
+                - cat
+                tty: true
+              - name: helm
+                image: alpine/helm:latest
+                command:
+                - cat
+                tty: true
+              - name: aws
+                image: amazon/aws-cli:latest
+                command:
+                - cat
+                tty: true
+              volumes:
+              - name: docker-sock
+                hostPath:
+                  path: /var/run/docker.sock
+            """
+        }
+    }
+    
+    environment {
+        AWS_REGION = 'us-west-2'
+        EKS_CLUSTER_NAME = 'gitops-eks-demo'
+        APP_NAME = 'nginx-app'
+        DOCKER_REGISTRY = 'your-aws-account-id.dkr.ecr.us-west-2.amazonaws.com'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Validate Helm Chart') {
+            steps {
+                container('helm') {
+                    sh 'helm lint helm/nginx/'
+                    sh 'helm template helm/nginx/ --debug'
+                }
+            }
+        }
+        
+        stage('Build and Push Docker Image') {
+            when {
+                anyOf {
+                    branch 'main';
+                    branch 'release/*'
+                }
+            }
+            steps {
+                container('aws') {
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${DOCKER_REGISTRY}
+                    """
+                }
+                
+                container('docker') {
+                    script {
+                        def imageTag = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.substring(0,7)}"
+                        
+                        sh """
+                        docker build -t ${DOCKER_REGISTRY}/${APP_NAME}:${imageTag} .
+                        docker push ${DOCKER_REGISTRY}/${APP_NAME}:${imageTag}
+                        """
+                        
+                        // Update values file with new image tag
+                        sh """
+                        sed -i "s|tag: .*|tag: ${imageTag}|g" helm/nginx/values.yaml
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Update Git Repository') {
+            when {
+                anyOf {
+                    branch 'main';
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    def imageTag = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.substring(0,7)}"
+                    
+                    sh """
+                    git config user.email "jenkins@example.com"
+                    git config user.name "Jenkins CI"
+                    git add helm/nginx/values.yaml
+                    git commit -m "Update image tag to ${imageTag}"
+                    git push origin HEAD:${env.BRANCH_NAME}
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Dev') {
+            when {
+                branch 'main'
+            }
+            steps {
+                container('aws') {
+                    sh """
+                    aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                    """
+                }
+                
+                container('kubectl') {
+                    sh """
+                    kubectl config current-context
+                    kubectl get pods -n argocd
+                    """
+                }
+                
+                container('helm') {
+                    sh """
+                    # Install argocd CLI
+                    curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+                    chmod +x argocd-linux-amd64
+                    mv argocd-linux-amd64 /usr/local/bin/argocd
+                    
+                    # Get ArgoCD credentials
+                    ARGOCD_SERVER=\$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                    ARGOCD_PASSWORD=\$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+                    
+                    # Log in to ArgoCD
+                    argocd login \$ARGOCD_SERVER --username admin --password \$ARGOCD_PASSWORD --insecure
+                    
+                    # Sync application
+                    argocd app sync nginx-app-dev --async
+                    
+                    # Wait for sync to complete
+                    argocd app wait nginx-app-dev --timeout 300
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Staging') {
+            when {
+                branch 'release/*'
+            }
+            steps {
+                container('aws') {
+                    sh """
+                    aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                    """
+                }
+                
+                container('helm') {
+                    sh """
+                    # Install argocd CLI
+                    curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+                    chmod +x argocd-linux-amd64
+                    mv argocd-linux-amd64 /usr/local/bin/argocd
+                    
+                    # Get ArgoCD credentials
+                    ARGOCD_SERVER=\$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                    ARGOCD_PASSWORD=\$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+                    
+                    # Log in to ArgoCD
+                    argocd login \$ARGOCD_SERVER --username admin --password \$ARGOCD_PASSWORD --insecure
+                    
+                    # Sync application
+                    argocd app sync nginx-app-staging --async
+                    
+                    # Wait for sync to complete
+                    argocd app wait nginx-app-staging --timeout 300
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                branch 'release/*'
+            }
+            input {
+                message "Deploy to Production?"
+                ok "Yes"
+            }
+            steps {
+                container('aws') {
+                    sh """
+                    aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                    """
+                }
+                
+                container('helm') {
+                    sh """
+                    # Install argocd CLI
+                    curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+                    chmod +x argocd-linux-amd64
+                    mv argocd-linux-amd64 /usr/local/bin/argocd
+                    
+                    # Get ArgoCD credentials
+                    ARGOCD_SERVER=\$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                    ARGOCD_PASSWORD=\$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+                    
+                    # Log in to ArgoCD
+                    argocd login \$ARGOCD_SERVER --username admin --password \$ARGOCD_PASSWORD --insecure
+                    
+                    # Sync application
+                    argocd app sync nginx-app-prod --async
+                    
+                    # Wait for sync to complete
+                    argocd app wait nginx-app-prod --timeout 300
+                    """
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Pipeline completed'
+        }
+        success {
+            echo 'Pipeline executed successfully'
+        }
+        failure {
+            echo 'Pipeline failed'
+        }
+    }
+}

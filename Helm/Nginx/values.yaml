@@ -1,0 +1,106 @@
+replicaCount: 2
+
+image:
+  repository: nginx
+  tag: 1.21.0
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "80"
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  hosts:
+    - host: ""
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+# Readiness probe for rollback detection
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  failureThreshold: 3
+
+# Liveness probe for container health
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 20
+
+# Deployment strategy for controlled rollouts
+deploymentStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# Pod disruption budget for availability guarantees
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Circuit breaker for automated rollback
+circuitBreaker:
+  enabled: true
+  errorThreshold: 50
+  resetTimeout: 30s
+
+# Monitoring settings
+monitoring:
+  enabled: true
+  prometheusRules:
+    enabled: true
+    rules:
+      - alert: HighErrorRate
+        expr: rate(nginx_http_requests_total{status=~"5.."}[5m]) / rate(nginx_http_requests_total[5m]) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: High error rate detected (> 5%)
+          description: Nginx has a high error rate
+
+nodeSelector: {}
+
+tolerations: []

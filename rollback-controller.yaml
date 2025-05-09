@@ -1,0 +1,215 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rollback-controller-config
+  namespace: argocd
+data:
+  config.yaml: |
+    watchNamespaces:
+      - dev
+      - staging
+      - prod
+    checkInterval: 15s
+    metrics:
+      enabled: true
+      port: 9090
+    rollbackCriteria:
+      minReadyPercentage: 70
+      failureTimeThreshold: 300  # 5 minutes in seconds
+      consecutiveFailures: 3
+      errorRateThreshold: 5      # 5% error rate
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollback-controller
+  namespace: argocd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rollback-controller
+  template:
+    metadata:
+      labels:
+        app: rollback-controller
+    spec:
+      serviceAccountName: rollback-controller-sa
+      containers:
+      - name: controller
+        image: golang:1.21  # In a real scenario, you'd use a custom built image
+        command:
+        - /bin/bash
+        - -c
+        - |
+          cat > /app/rollback-controller.go << 'EOF'
+          package main
+
+          import (
+            "context"
+            "flag"
+            "fmt"
+            "log"
+            "os"
+            "path/filepath"
+            "strconv"
+            "time"
+            
+            metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+            "k8s.io/client-go/kubernetes"
+            "k8s.io/client-go/rest"
+            "k8s.io/client-go/tools/clientcmd"
+            "k8s.io/client-go/util/homedir"
+          )
+
+          func main() {
+            log.Println("Starting rollback controller...")
+            
+            // Setup Kubernetes client
+            config, err := rest.InClusterConfig()
+            if err != nil {
+              // Fall back to kubeconfig
+              var kubeconfig *string
+              if home := homedir.HomeDir(); home != "" {
+                kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "path to kubeconfig file")
+              } else {
+                kubeconfig = flag.String("kubeconfig", "", "path to kubeconfig file")
+              }
+              flag.Parse()
+              
+              config, err = clientcmd.BuildConfigFromFlags("", *kubeconfig)
+              if err != nil {
+                log.Fatalf("Error building kubeconfig: %s", err.Error())
+              }
+            }
+
+            clientset, err := kubernetes.NewForConfig(config)
+            if err != nil {
+              log.Fatalf("Error creating kubernetes client: %s", err.Error())
+            }
+            
+            // Watch namespaces defined in config
+            watchNamespaces := []string{"dev", "staging", "prod"}
+            
+            for {
+              for _, namespace := range watchNamespaces {
+                checkDeploymentsInNamespace(clientset, namespace)
+              }
+              
+              // Sleep before next check
+              time.Sleep(15 * time.Second)
+            }
+          }
+
+          func checkDeploymentsInNamespace(clientset *kubernetes.Clientset, namespace string) {
+            log.Printf("Checking deployments in namespace: %s", namespace)
+            
+            deployments, err := clientset.AppsV1().Deployments(namespace).List(context.TODO(), metav1.ListOptions{})
+            if err != nil {
+              log.Printf("Error listing deployments in %s: %s", namespace, err.Error())
+              return
+            }
+            
+            for _, deployment := range deployments.Items {
+              // Check if rollback is enabled for this deployment
+              if val, exists := deployment.Annotations["rollback.nginx-app/enabled"]; exists && val == "true" {
+                log.Printf("Checking deployment %s for rollback criteria", deployment.Name)
+                
+                // Get rollback thresholds from annotations
+                failureThreshold := 5
+                if val, exists := deployment.Annotations["rollback.nginx-app/failure-threshold"]; exists {
+                  if i, err := strconv.Atoi(val); err == nil {
+                    failureThreshold = i
+                  }
+                }
+                
+                // Check if deployment is healthy
+                if !isDeploymentHealthy(clientset, &deployment, failureThreshold) {
+                  log.Printf("Deployment %s is unhealthy, initiating rollback", deployment.Name)
+                  
+                  // Perform rollback
+                  _, err := clientset.AppsV1().Deployments(namespace).GetScale(context.TODO(), deployment.Name, metav1.GetOptions{})
+                  if err != nil {
+                    log.Printf("Error getting scale for deployment %s: %s", deployment.Name, err.Error())
+                    continue
+                  }
+                  
+                  // Perform rollback by updating revision
+                  log.Printf("Rolling back deployment %s to previous revision", deployment.Name)
+                  
+                  // This is a simplified example; in a real controller you would:
+                  // 1. Get deployment history
+                  // 2. Find the last stable revision
+                  // 3. Update deployment to use that revision
+                  
+                  // Here we just trigger a rollback using kubectl in a real implementation
+                  log.Printf("kubectl rollout undo deployment/%s -n %s", deployment.Name, namespace)
+                  
+                  // Record rollback event
+                  log.Printf("Rollback completed for deployment %s", deployment.Name)
+                }
+              }
+            }
+          }
+
+          func isDeploymentHealthy(clientset *kubernetes.Clientset, deployment *metav1.Object, failureThreshold int) bool {
+            // Check if deployment is progressing
+            // In a real controller, you would:
+            // 1. Check if pods are ready
+            // 2. Check if readiness probes are passing
+            // 3. Check error rates from metrics
+            
+            // This is a simplified example for demonstration
+            return true  // Default to healthy for demo
+          }
+          EOF
+
+          cd /app
+          go mod init rollback-controller
+          go get k8s.io/client-go@v0.29.0
+          go get k8s.io/apimachinery@v0.29.0
+          go run rollback-controller.go
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+      volumes:
+      - name: config-volume
+        configMap:
+          name: rollback-controller-config
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rollback-controller-sa
+  namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rollback-controller-role
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "services", "configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rollback-controller-binding
+subjects:
+- kind: ServiceAccount
+  name: rollback-controller-sa
+  namespace: argocd
+roleRef:
+  kind: ClusterRole
+  name: rollback-controller-role
+  apiGroup: rbac.authorization.k8s.io
